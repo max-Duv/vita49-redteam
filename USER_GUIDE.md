@@ -39,7 +39,7 @@ This guide covers every feature of the VITA 49 (VRT) Red-Team Toolkit, including
 ### Install from Source
 
 ```bash
-git clone https://github.com/YOUR_USER/vita49-redteam.git
+git clone https://github.com/max-Duv/vita49-redteam.git
 cd vita49-redteam
 pip install -e ".[dev]"
 ```

@@ -33,7 +33,7 @@ A Python toolkit for crafting, transmitting, replaying, sniffing, and analyzing 
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USER/vita49-redteam.git
+git clone https://github.com/max-Duv/vita49-redteam.git
 cd vita49-redteam
 
 # Install in editable mode with dev dependencies
