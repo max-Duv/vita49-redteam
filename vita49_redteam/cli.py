@@ -420,5 +420,204 @@ def _sniff_callback(pkt) -> None:  # noqa: ANN001
         click.echo(f"  UDP packet ({len(bytes(pkt.payload))} bytes)")
 
 
+# =========================================================================
+# Epic E2 — Fuzz sub-commands
+# =========================================================================
+
+@cli.command("fuzz-header")
+@click.option("--target", "-t", default=None, help="Target host:port (sends packets if set).")
+@click.option("--count", "-c", type=int, default=0, help="Max fuzz cases (0=all).")
+@click.option("--strategy", type=click.Choice(["boundary", "bitflip", "type_confusion", "random", "all"]),
+              default="all", help="Fuzzing strategy.")
+@click.option("--output", "-o", type=click.Path(), default=None, help="Save fuzzed packets to PCAP.")
+@click.option("--seed", type=int, default=None, help="RNG seed for reproducibility.")
+@click.option("--payload-size", type=int, default=64, help="Base payload size in bytes.")
+def fuzz_header(target, count, strategy, output, seed, payload_size):
+    """VRT-201: Fuzz all VITA 49 header fields."""
+    from vita49_redteam.fuzz.header_fuzzer import HeaderFuzzer, HeaderFuzzConfig, FuzzStrategy
+
+    strategy_map = {
+        "boundary": [FuzzStrategy.BOUNDARY],
+        "bitflip": [FuzzStrategy.BIT_FLIP],
+        "type_confusion": [FuzzStrategy.TYPE_CONFUSION],
+        "random": [FuzzStrategy.RANDOM],
+        "all": list(FuzzStrategy),
+    }
+    cfg = HeaderFuzzConfig(
+        strategies=strategy_map[strategy],
+        seed=seed,
+        base_payload_size=payload_size,
+    )
+    fuzzer = HeaderFuzzer(cfg)
+    cases = fuzzer.generate_count(count) if count > 0 else list(fuzzer.generate())
+    click.echo(f"Generated {len(cases)} header fuzz cases (strategy={strategy})")
+
+    if output:
+        _write_pcap([pkt for _, pkt in cases], output)
+        click.echo(f"Saved to {output}")
+
+    if target:
+        _fuzz_send(target, [pkt.pack() for _, pkt in cases])
+
+    if not target and not output:
+        for desc, pkt in cases[:10]:
+            click.echo(f"  {desc}")
+            _print_hex(pkt.pack())
+        if len(cases) > 10:
+            click.echo(f"  ... and {len(cases) - 10} more cases")
+
+
+@cli.command("fuzz-payload")
+@click.option("--target", "-t", default=None, help="Target host:port.")
+@click.option("--count", "-c", type=int, default=0, help="Max cases (0=all).")
+@click.option("--output", "-o", type=click.Path(), default=None, help="Save to PCAP.")
+@click.option("--payload-size", type=int, default=256, help="Base payload size.")
+def fuzz_payload(target, count, output, payload_size):
+    """VRT-202: Generate payload size mismatch test packets."""
+    from vita49_redteam.fuzz.payload_fuzzer import PayloadSizeFuzzer, PayloadMismatchConfig
+
+    cfg = PayloadMismatchConfig(base_payload_size=payload_size)
+    fuzzer = PayloadSizeFuzzer(cfg)
+    cases = fuzzer.generate_count(count) if count > 0 else list(fuzzer.generate())
+    click.echo(f"Generated {len(cases)} payload mismatch cases")
+
+    if output:
+        _write_raw_pcap([raw for _, raw in cases], output)
+        click.echo(f"Saved to {output}")
+
+    if target:
+        _fuzz_send(target, [raw for _, raw in cases])
+
+    if not target and not output:
+        for desc, raw in cases[:10]:
+            click.echo(f"  {desc} ({len(raw)} bytes)")
+        if len(cases) > 10:
+            click.echo(f"  ... and {len(cases) - 10} more cases")
+
+
+@cli.command("fuzz-trailer")
+@click.option("--target", "-t", default=None, help="Target host:port.")
+@click.option("--count", "-c", type=int, default=0, help="Max cases (0=all).")
+@click.option("--output", "-o", type=click.Path(), default=None, help="Save to PCAP.")
+@click.option("--seed", type=int, default=None, help="RNG seed.")
+def fuzz_trailer(target, count, output, seed):
+    """VRT-203: Fuzz all VITA 49 trailer fields."""
+    from vita49_redteam.fuzz.trailer_fuzzer import TrailerFuzzer, TrailerFuzzConfig
+
+    cfg = TrailerFuzzConfig(seed=seed)
+    fuzzer = TrailerFuzzer(cfg)
+    cases = fuzzer.generate_count(count) if count > 0 else list(fuzzer.generate())
+    click.echo(f"Generated {len(cases)} trailer fuzz cases")
+
+    if output:
+        _write_pcap([pkt for _, pkt in cases], output)
+        click.echo(f"Saved to {output}")
+
+    if target:
+        _fuzz_send(target, [pkt.pack() for _, pkt in cases])
+
+    if not target and not output:
+        for desc, pkt in cases[:10]:
+            click.echo(f"  {desc}")
+        if len(cases) > 10:
+            click.echo(f"  ... and {len(cases) - 10} more cases")
+
+
+@cli.command("fuzz-size")
+@click.option("--target", "-t", default=None, help="Target host:port.")
+@click.option("--count", "-c", type=int, default=0, help="Max cases (0=all).")
+@click.option("--output", "-o", type=click.Path(), default=None, help="Save to PCAP.")
+def fuzz_size(target, count, output):
+    """VRT-204: Generate truncated & oversized VRT packets."""
+    from vita49_redteam.fuzz.size_fuzzer import SizeGenerator, SizeGenConfig
+
+    fuzzer = SizeGenerator(SizeGenConfig())
+    cases = fuzzer.generate_count(count) if count > 0 else list(fuzzer.generate())
+    click.echo(f"Generated {len(cases)} size test cases")
+
+    if output:
+        _write_raw_pcap([raw for _, raw in cases], output)
+        click.echo(f"Saved to {output}")
+
+    if target:
+        _fuzz_send(target, [raw for _, raw in cases])
+
+    if not target and not output:
+        for desc, raw in cases[:10]:
+            click.echo(f"  {desc} ({len(raw)} bytes)")
+        if len(cases) > 10:
+            click.echo(f"  ... and {len(cases) - 10} more cases")
+
+
+@cli.command("fuzz-run")
+@click.option("--target", "-t", required=True, help="Target host:port.")
+@click.option("--module", type=click.Choice(["header", "payload", "trailer", "size", "all"]),
+              default="all", help="Which fuzz module to run.")
+@click.option("--max-cases", type=int, default=0, help="Max cases (0=all).")
+@click.option("--rate", type=float, default=100, help="Packets per second.")
+@click.option("--probe-interval", type=int, default=10, help="Health-check every N packets.")
+@click.option("--probe-timeout", type=float, default=2.0, help="Probe timeout in seconds.")
+@click.option("--seed", type=int, default=None, help="RNG seed.")
+@click.option("--pause-on-failure", is_flag=True, help="Stop if target goes down.")
+def fuzz_run(target, module, max_cases, rate, probe_interval, probe_timeout, seed, pause_on_failure):
+    """VRT-205: Run full fuzz campaign with crash/hang detection."""
+    from vita49_redteam.fuzz.harness import CrashHarness, HarnessConfig, FuzzModule
+
+    module_map = {
+        "header": [FuzzModule.HEADER],
+        "payload": [FuzzModule.PAYLOAD_SIZE],
+        "trailer": [FuzzModule.TRAILER],
+        "size": [FuzzModule.TRUNCATED_OVERSIZED],
+        "all": [FuzzModule.ALL],
+    }
+    host, port = _parse_target(target)
+    cfg = HarnessConfig(
+        target_host=host,
+        target_port=port,
+        modules=module_map[module],
+        max_cases=max_cases,
+        rate_pps=rate,
+        probe_interval=probe_interval,
+        probe_timeout=probe_timeout,
+        seed=seed,
+        pause_on_failure=pause_on_failure,
+    )
+
+    def progress(current, total, desc):
+        if current % 50 == 0 or current == total:
+            click.echo(f"  [{current}/{total}] {desc}")
+
+    harness = CrashHarness(cfg, progress_callback=progress)
+    click.echo(f"Starting fuzz campaign against {target} (module={module})...")
+    result = harness.run()
+    click.echo(result.summary())
+
+
+# -- Fuzz helpers ---------------------------------------------------------
+
+def _fuzz_send(target: str, raw_payloads: list[bytes]) -> None:
+    """Send a list of raw byte payloads to a target."""
+    from vita49_redteam.transport.udp_sender import SenderConfig, UDPSender
+
+    host, port = _parse_target(target)
+    config = SenderConfig(target_host=host, target_port=port)
+    with UDPSender(config) as sender:
+        for raw in raw_payloads:
+            sender.send_raw(raw)
+    click.echo(f"Sent {len(raw_payloads)} fuzzed packets to {target}")
+
+
+def _write_raw_pcap(raw_payloads: list[bytes], path: str) -> None:
+    """Write raw byte payloads to a PCAP file."""
+    from scapy.all import Ether, IP, UDP, wrpcap
+
+    scapy_pkts = []
+    for raw in raw_payloads:
+        scapy_pkts.append(
+            Ether() / IP(dst="127.0.0.1") / UDP(sport=12345, dport=VRT_DEFAULT_PORT) / raw
+        )
+    wrpcap(path, scapy_pkts)
+
+
 if __name__ == "__main__":
     cli()

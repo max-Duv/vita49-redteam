@@ -13,12 +13,18 @@ This guide covers every feature of the VITA 49 (VRT) Red-Team Toolkit, including
    - [replay](#replay)
    - [sniff](#sniff)
    - [report](#report)
+   - [fuzz-header](#fuzz-header)
+   - [fuzz-payload](#fuzz-payload)
+   - [fuzz-trailer](#fuzz-trailer)
+   - [fuzz-size](#fuzz-size)
+   - [fuzz-run](#fuzz-run)
 3. [GUI Reference](#gui-reference)
    - [Craft Tab](#craft-tab)
    - [Send Tab](#send-tab)
    - [Replay Tab](#replay-tab)
    - [Sniff Tab](#sniff-tab)
    - [Report Tab](#report-tab)
+   - [Fuzz Tab](#fuzz-tab)
 4. [Python API](#python-api)
 5. [Common Workflows](#common-workflows)
 6. [Troubleshooting](#troubleshooting)
@@ -234,6 +240,129 @@ vita49-rt report --input capture.pcap
 
 ---
 
+### fuzz-header
+
+Generate VRT packets with fuzzed header fields using configurable strategies.
+
+```bash
+vita49-rt fuzz-header [OPTIONS]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--strategy` | Choice | `all` | Fuzzing strategy: `boundary`, `bit_flip`, `type_confusion`, `random`, or `all` |
+| `--count` | Integer | `0` (unlimited) | Maximum number of cases to generate |
+| `--seed` | Integer | None | Random seed for reproducibility |
+| `--output` | Path | None | Save cases to PCAP file |
+| `--target` | String | None | Send cases to `host:port` |
+| `--rate` | Integer | `100` | Send rate in packets per second |
+
+**Example:**
+
+```bash
+# Generate and save 100 boundary-fuzzed headers
+vita49-rt fuzz-header --strategy boundary --count 100 --output fuzz_boundary.pcap
+
+# Send bit-flip fuzzed packets to target
+vita49-rt fuzz-header --strategy bit_flip --count 50 --target 10.0.0.5:4991
+```
+
+### fuzz-payload
+
+Generate packets with payload-size mismatches (declared size vs actual data).
+
+```bash
+vita49-rt fuzz-payload [OPTIONS]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--count` | Integer | `0` (unlimited) | Maximum number of cases to generate |
+| `--payload-size` | Integer | `64` | Base payload size in bytes |
+| `--seed` | Integer | None | Random seed for reproducibility |
+| `--output` | Path | None | Save cases to PCAP file |
+| `--target` | String | None | Send cases to `host:port` |
+| `--rate` | Integer | `100` | Send rate in packets per second |
+
+**Example:**
+
+```bash
+vita49-rt fuzz-payload --count 30 --payload-size 256 --output fuzz_payloads.pcap
+```
+
+### fuzz-trailer
+
+Generate packets with fuzzed trailer fields (individual bits, enable/indicator mismatches, walking ones).
+
+```bash
+vita49-rt fuzz-trailer [OPTIONS]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--count` | Integer | `0` (unlimited) | Maximum number of cases to generate |
+| `--seed` | Integer | None | Random seed for reproducibility |
+| `--output` | Path | None | Save cases to PCAP file |
+| `--target` | String | None | Send cases to `host:port` |
+| `--rate` | Integer | `100` | Send rate in packets per second |
+
+**Example:**
+
+```bash
+vita49-rt fuzz-trailer --count 50 --output fuzz_trailers.pcap
+```
+
+### fuzz-size
+
+Generate truncated and oversized raw packets.
+
+```bash
+vita49-rt fuzz-size [OPTIONS]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--count` | Integer | `0` (unlimited) | Maximum number of cases to generate |
+| `--seed` | Integer | None | Random seed for reproducibility |
+| `--output` | Path | None | Save cases to PCAP file |
+| `--target` | String | None | Send cases to `host:port` |
+| `--rate` | Integer | `100` | Send rate in packets per second |
+
+**Example:**
+
+```bash
+vita49-rt fuzz-size --count 20 --target 192.168.1.50:4991 --rate 50
+```
+
+### fuzz-run
+
+Run an automated fuzz campaign targeting a VRT receiver. The harness sends fuzz cases across all modules while monitoring target health via periodic UDP probes.
+
+```bash
+vita49-rt fuzz-run [OPTIONS]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--target` | String | **Required** | Target `host:port` |
+| `--modules` | Choice | `all` | Fuzz modules: `header`, `payload`, `trailer`, `size`, or `all` |
+| `--max-cases` | Integer | `0` (all) | Maximum total cases to send |
+| `--rate` | Integer | `100` | Send rate in packets per second |
+| `--seed` | Integer | None | Random seed for reproducibility |
+| `--probe-interval` | Integer | `10` | Seconds between health probes |
+
+**Example:**
+
+```bash
+# Full campaign against target
+vita49-rt fuzz-run --target 10.0.0.5:4991 --modules all --max-cases 1000 --rate 200
+
+# Header-only campaign
+vita49-rt fuzz-run --target 10.0.0.5:4991 --modules header --max-cases 500
+```
+
+---
+
 ## GUI Reference
 
 Launch the GUI:
@@ -242,7 +371,7 @@ Launch the GUI:
 vita49-rt-gui
 ```
 
-The application opens a dark-themed window with five tabs along the top. All network operations run in background threads so the interface stays responsive.
+The application opens a dark-themed window with six tabs along the top. All network operations run in background threads so the interface stays responsive.
 
 ---
 
@@ -372,6 +501,36 @@ Analyze PCAP files for VRT traffic statistics.
 
 ---
 
+### Fuzz Tab
+
+Generate malformed VRT packets and run fuzz campaigns against target systems.
+
+**Fields:**
+
+| Field | Description |
+|---|---|
+| Module | Fuzz module: All, Header, Payload Size, Trailer, Truncated/Oversized |
+| Strategy | Fuzzing strategy (boundary, bit-flip, type-confusion, random, or all) |
+| Max Cases | Maximum number of cases to generate (0 = all available) |
+| Seed | Random seed for reproducibility (blank = random) |
+| Payload Size | Base payload size in bytes for payload-size fuzzer |
+| Target Host | Target IP address for live fuzz campaigns |
+| Target Port | Target UDP port |
+| Rate (pps) | Packets per second for transmission |
+| Probe Interval | Seconds between target health probes |
+
+**Actions:**
+
+| Button | Effect |
+|---|---|
+| **Generate** | Creates fuzz cases and displays descriptions in the output pane. |
+| **Save PCAP** | Saves generated fuzz cases to a PCAP file. |
+| **Run Campaign** | Sends fuzz cases to the target while monitoring for crashes/hangs. Progress is shown in real-time. |
+| **Stop** | Halts an active fuzz campaign. |
+| **Clear** | Clears the output pane. |
+
+---
+
 ## Python API
 
 You can also use the toolkit as a library in your own scripts.
@@ -453,6 +612,32 @@ pkt = (IP(dst="192.168.1.50") /
            vrt_data=b"\x00" * 64,
        ))
 send(pkt)
+```
+
+### Fuzzing with the API
+
+```python
+from vita49_redteam.fuzz.header_fuzzer import HeaderFuzzer, HeaderFuzzConfig, FuzzStrategy
+from vita49_redteam.fuzz.harness import CrashHarness, HarnessConfig, FuzzModule
+
+# Generate header-fuzzed packets
+config = HeaderFuzzConfig(strategies=[FuzzStrategy.BOUNDARY, FuzzStrategy.BIT_FLIP])
+fuzzer = HeaderFuzzer(config)
+for desc, pkt in fuzzer.generate(max_count=20):
+    raw = pkt.pack()
+    print(f"{desc}: {len(raw)} bytes")
+
+# Run an automated fuzz campaign
+harness_cfg = HarnessConfig(
+    target_host="192.168.1.50",
+    target_port=4991,
+    modules=[FuzzModule.ALL],
+    max_cases=500,
+    rate_pps=200,
+)
+harness = CrashHarness(harness_cfg)
+result = harness.run()
+print(result.summary())
 ```
 
 ---

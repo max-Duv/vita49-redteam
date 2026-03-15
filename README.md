@@ -17,7 +17,9 @@ A Python toolkit for crafting, transmitting, replaying, sniffing, and analyzing 
 | **Passive Sniffing** | Capture live VRT traffic on a network interface with optional BPF filtering and PCAP export |
 | **Traffic Analysis** | Analyze PCAP files for packet-type distribution, stream-ID enumeration, timing statistics, and anomaly detection |
 | **Scapy Integration** | Custom Scapy dissector layers (`VRT_Header`, `VRT_Trailer`) auto-bound to UDP port 4991 |
-| **GUI & CLI** | Full Tkinter GUI with 5 operational tabs, plus a Click-based CLI for scripting and automation |
+| **Protocol Fuzzing** | Header field fuzzer, payload-size mismatch generator, trailer field fuzzer, truncated/oversized packet generator with boundary, bit-flip, type-confusion, and random strategies |
+| **Crash & Hang Detection** | Automated fuzz harness that sends malformed packets, monitors target health via UDP probes, and reports failures with full case logs |
+| **GUI & CLI** | Full Tkinter GUI with 6 operational tabs, plus a Click-based CLI for scripting and automation |
 
 ---
 
@@ -67,11 +69,16 @@ Options:
   --help         Show this message and exit
 
 Commands:
-  craft   Build VRT packets and export to hex or PCAP
-  send    Transmit VRT packets to a target over UDP
-  replay  Replay VRT packets from a PCAP file
-  sniff   Capture live VRT traffic from a network interface
-  report  Analyze a PCAP file containing VRT traffic
+  craft         Build VRT packets and export to hex or PCAP
+  send          Transmit VRT packets to a target over UDP
+  replay        Replay VRT packets from a PCAP file
+  sniff         Capture live VRT traffic from a network interface
+  report        Analyze a PCAP file containing VRT traffic
+  fuzz-header   Generate header-fuzzed VRT packets
+  fuzz-payload  Generate payload-size mismatch packets
+  fuzz-trailer  Generate trailer-fuzzed VRT packets
+  fuzz-size     Generate truncated/oversized packets
+  fuzz-run      Run automated fuzz campaign with crash detection
 ```
 
 #### Craft a Packet
@@ -112,6 +119,25 @@ vita49-rt send --target 192.168.1.50:4991 --stream-id 0xDEAD --count 100 --rate 
 vita49-rt send --target 10.0.0.5:4991 --count 50 --source-ip 10.0.0.99
 ```
 
+#### Protocol Fuzzing
+
+```bash
+# Generate 50 header-fuzzed packets and save to PCAP
+vita49-rt fuzz-header --strategy all --count 50 --output fuzz_headers.pcap
+
+# Generate payload-size mismatch cases and send to target
+vita49-rt fuzz-payload --count 30 --target 192.168.1.50:4991
+
+# Generate trailer field fuzz cases
+vita49-rt fuzz-trailer --count 40 --output fuzz_trailers.pcap
+
+# Generate truncated and oversized packets
+vita49-rt fuzz-size --count 20 --output fuzz_sizes.pcap
+
+# Run a full fuzz campaign with crash/hang detection
+vita49-rt fuzz-run --target 192.168.1.50:4991 --modules all --max-cases 500 --rate 200
+```
+
 #### Replay a PCAP
 
 ```bash
@@ -146,13 +172,14 @@ Launch the graphical interface:
 vita49-rt-gui
 ```
 
-The GUI provides five tabs:
+The GUI provides six tabs:
 
 1. **Craft** — Build packets interactively with real-time hex preview
 2. **Send** — Configure target, rate, and burst parameters; transmit crafted packets
 3. **Replay** — Load PCAPs, apply field modifications, replay with timing control
 4. **Sniff** — Capture live traffic with start/stop controls and packet display
 5. **Report** — Load and analyze PCAP files with summary statistics
+6. **Fuzz** — Generate malformed packets with configurable strategies and run automated fuzz campaigns with crash detection
 
 > See [USER_GUIDE.md](USER_GUIDE.md) for detailed instructions on every feature.
 
@@ -167,8 +194,8 @@ vita49-redteam/
 ├── USER_GUIDE.md
 ├── vita49_redteam/
 │   ├── __init__.py
-│   ├── cli.py                      # Click CLI (craft, send, replay, sniff, report)
-│   ├── gui.py                      # Tkinter GUI (5-tab interface)
+│   ├── cli.py                      # Click CLI (craft, send, replay, sniff, report, fuzz-*)
+│   ├── gui.py                      # Tkinter GUI (6-tab interface)
 │   ├── core/
 │   │   ├── constants.py            # VRT enums, masks, shifts, protocol constants
 │   │   └── packet.py               # VRTPacket dataclass, builder pattern, pack/unpack
@@ -176,14 +203,26 @@ vita49-redteam/
 │   │   └── layers.py               # VRT_Header & VRT_Trailer Scapy layers
 │   ├── transport/
 │   │   └── udp_sender.py           # UDP sender with rate limiting & raw-socket spoofing
-│   └── replay/
-│       └── pcap_engine.py          # PCAP loader, field modifiers, replay engine
+│   ├── replay/
+│   │   └── pcap_engine.py          # PCAP loader, field modifiers, replay engine
+│   └── fuzz/
+│       ├── __init__.py
+│       ├── header_fuzzer.py        # Header field fuzzer (boundary, bit-flip, type-confusion, random)
+│       ├── payload_fuzzer.py       # Payload-size mismatch generator
+│       ├── trailer_fuzzer.py       # Trailer field fuzzer
+│       ├── size_fuzzer.py          # Truncated & oversized packet generator
+│       └── harness.py              # Crash & hang detection harness
 └── tests/
     ├── test_constants.py
     ├── test_packet.py
     ├── test_scapy_layers.py
     ├── test_udp_sender.py
-    └── test_cli.py
+    ├── test_cli.py
+    ├── test_header_fuzzer.py
+    ├── test_payload_fuzzer.py
+    ├── test_trailer_fuzzer.py
+    ├── test_size_fuzzer.py
+    └── test_harness.py
 ```
 
 ---
@@ -196,7 +235,7 @@ vita49-redteam/
 │              │     │  packet.py   │     │  udp_sender.py   │──▶ Network
 │  craft/send/ │     │  constants.py│     └──────────────────┘
 │  replay/sniff│     └──────────────┘
-│  report      │            │
+│  report/fuzz │            │
 └──────────────┘            ▼
                     ┌──────────────────┐
                     │  scapy_layers/   │
@@ -225,6 +264,11 @@ vita49-redteam/
 | `transport.udp_sender` | `TokenBucket` | Token-bucket rate limiter |
 | `replay.pcap_engine` | `PcapReplayEngine`, `ReplayConfig` | PCAP replay with timing preservation and field modification |
 | `replay.pcap_engine` | `load_pcap()`, `save_modified_pcap()` | PCAP I/O utilities |
+| `fuzz.header_fuzzer` | `HeaderFuzzer`, `HeaderFuzzConfig` | Header field fuzzing with boundary, bit-flip, type-confusion, and random strategies |
+| `fuzz.payload_fuzzer` | `PayloadSizeFuzzer`, `PayloadMismatchConfig` | Payload-size mismatch generation (undersized, oversized, zero-length, off-by-one, extreme) |
+| `fuzz.trailer_fuzzer` | `TrailerFuzzer`, `TrailerFuzzConfig` | Trailer field fuzzing with individual bits, enable/indicator mismatch, walking ones |
+| `fuzz.size_fuzzer` | `SizeGenerator`, `SizeGenConfig` | Truncated and oversized packet generation with progressive truncation |
+| `fuzz.harness` | `CrashHarness`, `HarnessConfig` | Automated fuzz campaign runner with target health monitoring and crash detection |
 
 ---
 

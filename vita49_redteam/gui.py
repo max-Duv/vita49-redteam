@@ -152,6 +152,7 @@ class VRT_RedTeamGUI:
         self._build_replay_tab()
         self._build_sniff_tab()
         self._build_report_tab()
+        self._build_fuzz_tab()
         self._build_footer(shell)
 
     def _build_header(self, parent) -> None:
@@ -767,6 +768,203 @@ class VRT_RedTeamGUI:
         except Exception as exc:
             messagebox.showerror("Report Error", str(exc))
             self._set_status("Report failed", str(exc))
+
+    # =================================================================
+    # Fuzz Tab (Epic E2)
+    # =================================================================
+
+    def _build_fuzz_tab(self) -> None:
+        body = self._new_tab("Fuzz", "Protocol fuzzing — generate malformed VRT packets and test target robustness.")
+        top = ttk.Frame(body, style="App.TFrame")
+        top.pack(fill="both", expand=True)
+        left = ttk.Frame(top, style="App.TFrame")
+        left.pack(side="left", fill="both", expand=True)
+        right = ttk.Frame(top, style="App.TFrame")
+        right.pack(side="left", fill="both", expand=True, padx=(12, 0))
+
+        # -- Module selection card --
+        mod_card, mod_fields = self._form_card(left, "Fuzz Module", "Select which fuzzer to run and its parameters.")
+        self.fuzz_module = self._combo(mod_fields, ["All", "Header", "Payload Size", "Trailer", "Truncated/Oversized"])
+        self.fuzz_strategy = self._combo(mod_fields, ["All", "Boundary", "Bit-Flip", "Type Confusion", "Random"])
+        self.fuzz_max_cases = self._entry(mod_fields, 10)
+        self.fuzz_max_cases.insert(0, "0")
+        self.fuzz_seed = self._entry(mod_fields, 10)
+        self.fuzz_payload_size = self._entry(mod_fields, 10)
+        self.fuzz_payload_size.insert(0, "64")
+        self._field(mod_fields, 0, 0, "Module", self.fuzz_module)
+        self._field(mod_fields, 0, 1, "Strategy", self.fuzz_strategy)
+        self._field(mod_fields, 1, 0, "Max Cases (0=all)", self.fuzz_max_cases)
+        self._field(mod_fields, 1, 1, "Seed (optional)", self.fuzz_seed)
+        self._field(mod_fields, 2, 0, "Payload Size", self.fuzz_payload_size)
+
+        gen_actions = ttk.Frame(mod_card, style="Card.TFrame")
+        gen_actions.pack(fill="x")
+        self._button(gen_actions, "Generate Cases", self._on_fuzz_generate, accent=True).pack(side="left")
+        self._button(gen_actions, "Save to PCAP", self._on_fuzz_save).pack(side="left", padx=(10, 0))
+
+        # -- Target + harness card --
+        target_card, target_fields = self._form_card(left, "Target (Harness)", "Configure target for fuzz-run with crash/hang detection.")
+        self.fuzz_target_host = self._entry(target_fields)
+        self.fuzz_target_host.insert(0, "127.0.0.1")
+        self.fuzz_target_port = self._entry(target_fields, 10)
+        self.fuzz_target_port.insert(0, str(VRT_DEFAULT_PORT))
+        self.fuzz_rate = self._entry(target_fields, 10)
+        self.fuzz_rate.insert(0, "100")
+        self.fuzz_probe_interval = self._entry(target_fields, 10)
+        self.fuzz_probe_interval.insert(0, "10")
+        self._field(target_fields, 0, 0, "Target Host", self.fuzz_target_host)
+        self._field(target_fields, 0, 1, "Port", self.fuzz_target_port)
+        self._field(target_fields, 1, 0, "Rate (pps)", self.fuzz_rate)
+        self._field(target_fields, 1, 1, "Probe Every N", self.fuzz_probe_interval)
+
+        harness_actions = ttk.Frame(target_card, style="Card.TFrame")
+        harness_actions.pack(fill="x")
+        self._fuzz_run_btn = self._button(harness_actions, "Run Fuzz Campaign", self._on_fuzz_run, accent=True)
+        self._fuzz_run_btn.pack(side="left")
+        self._fuzz_stop_btn = self._button(harness_actions, "Stop", self._on_fuzz_stop)
+        self._fuzz_stop_btn.pack(side="left", padx=(10, 0))
+        self._fuzz_stop_btn.config(state="disabled")
+
+        # -- Output --
+        out = ttk.Frame(right, style="Card.TFrame", padding=18)
+        out.pack(fill="both", expand=True)
+        ttk.Label(out, text="Fuzz Output", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(out, text="Fuzz case descriptions, hex previews, and harness reports appear here.", style="Muted.TLabel").pack(anchor="w", pady=(4, 12))
+        self.fuzz_output = self._make_output(out, 28)
+        self.fuzz_output.pack(fill="both", expand=True)
+
+        self._fuzz_cases: list[tuple[str, bytes]] = []
+        self._fuzz_harness = None
+
+    def _get_fuzz_seed(self) -> int | None:
+        val = self.fuzz_seed.get().strip()
+        return int(val) if val else None
+
+    def _on_fuzz_generate(self) -> None:
+        try:
+            module = self.fuzz_module.get()
+            max_cases = int(self.fuzz_max_cases.get())
+            seed = self._get_fuzz_seed()
+            payload_size = int(self.fuzz_payload_size.get())
+            cases: list[tuple[str, bytes]] = []
+
+            if module in ("All", "Header"):
+                from vita49_redteam.fuzz.header_fuzzer import HeaderFuzzer, HeaderFuzzConfig, FuzzStrategy
+                strategy_map = {
+                    "All": list(FuzzStrategy),
+                    "Boundary": [FuzzStrategy.BOUNDARY],
+                    "Bit-Flip": [FuzzStrategy.BIT_FLIP],
+                    "Type Confusion": [FuzzStrategy.TYPE_CONFUSION],
+                    "Random": [FuzzStrategy.RANDOM],
+                }
+                cfg = HeaderFuzzConfig(strategies=strategy_map[self.fuzz_strategy.get()], seed=seed, base_payload_size=payload_size)
+                for desc, pkt in HeaderFuzzer(cfg).generate():
+                    cases.append((desc, pkt.pack()))
+
+            if module in ("All", "Payload Size"):
+                from vita49_redteam.fuzz.payload_fuzzer import PayloadSizeFuzzer, PayloadMismatchConfig
+                for desc, raw in PayloadSizeFuzzer(PayloadMismatchConfig(base_payload_size=payload_size)).generate():
+                    cases.append((desc, raw))
+
+            if module in ("All", "Trailer"):
+                from vita49_redteam.fuzz.trailer_fuzzer import TrailerFuzzer, TrailerFuzzConfig
+                for desc, pkt in TrailerFuzzer(TrailerFuzzConfig(seed=seed)).generate():
+                    cases.append((desc, pkt.pack()))
+
+            if module in ("All", "Truncated/Oversized"):
+                from vita49_redteam.fuzz.size_fuzzer import SizeGenerator, SizeGenConfig
+                for desc, raw in SizeGenerator(SizeGenConfig()).generate():
+                    cases.append((desc, raw))
+
+            if max_cases > 0:
+                cases = cases[:max_cases]
+
+            self._fuzz_cases = cases
+            lines = [f"Generated {len(cases)} fuzz case(s) (module={module})\n"]
+            for i, (desc, raw) in enumerate(cases[:50]):
+                lines.append(f"  [{i:04d}] {desc} ({len(raw)} bytes)")
+            if len(cases) > 50:
+                lines.append(f"\n  ... and {len(cases) - 50} more")
+            _output_write(self.fuzz_output, "\n".join(lines) + "\n", clear=True)
+            self._set_status("Fuzz cases ready", f"{len(cases)} case(s) generated.")
+        except Exception as exc:
+            messagebox.showerror("Fuzz Error", str(exc))
+            self._set_status("Fuzz generation failed", str(exc))
+
+    def _on_fuzz_save(self) -> None:
+        if not self._fuzz_cases:
+            messagebox.showwarning("No Cases", "Generate fuzz cases first.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".pcap", filetypes=[("PCAP files", "*.pcap"), ("All files", "*.*")], title="Save Fuzzed PCAP")
+        if not path:
+            return
+        try:
+            from scapy.all import Ether, IP, UDP, wrpcap
+            scapy_pkts = [Ether() / IP(dst="127.0.0.1") / UDP(sport=12345, dport=VRT_DEFAULT_PORT) / raw for _, raw in self._fuzz_cases]
+            wrpcap(path, scapy_pkts)
+            _output_write(self.fuzz_output, f"\nSaved {len(self._fuzz_cases)} fuzz case(s) to {path}\n")
+            self._set_status("Fuzz PCAP saved", f"Wrote {len(self._fuzz_cases)} case(s) to {path}.")
+        except Exception as exc:
+            messagebox.showerror("Save Error", str(exc))
+
+    def _on_fuzz_run(self) -> None:
+        from vita49_redteam.fuzz.harness import CrashHarness, HarnessConfig, FuzzModule
+
+        try:
+            module_map = {
+                "All": [FuzzModule.ALL],
+                "Header": [FuzzModule.HEADER],
+                "Payload Size": [FuzzModule.PAYLOAD_SIZE],
+                "Trailer": [FuzzModule.TRAILER],
+                "Truncated/Oversized": [FuzzModule.TRUNCATED_OVERSIZED],
+            }
+            cfg = HarnessConfig(
+                target_host=self.fuzz_target_host.get().strip(),
+                target_port=int(self.fuzz_target_port.get()),
+                modules=module_map[self.fuzz_module.get()],
+                max_cases=int(self.fuzz_max_cases.get()),
+                rate_pps=float(self.fuzz_rate.get()),
+                probe_interval=int(self.fuzz_probe_interval.get()),
+                seed=self._get_fuzz_seed(),
+            )
+            _output_write(self.fuzz_output, f"Starting fuzz campaign against {cfg.target_host}:{cfg.target_port}...\n", clear=True)
+            self._set_status("Fuzz running", f"Campaign active against {cfg.target_host}:{cfg.target_port}.")
+            self._fuzz_run_btn.config(state="disabled")
+            self._fuzz_stop_btn.config(state="normal")
+
+            def progress(current, total, desc):
+                if current % 25 == 0 or current == total:
+                    self.root.after(0, lambda c=current, t=total, d=desc: _output_write(self.fuzz_output, f"  [{c}/{t}] {d}\n"))
+
+            harness = CrashHarness(cfg, progress_callback=progress)
+            self._fuzz_harness = harness
+
+            def _do_fuzz():
+                try:
+                    result = harness.run()
+                    summary = result.summary()
+                    self.root.after(0, lambda: _output_write(self.fuzz_output, f"\n{summary}\n"))
+                    self.root.after(0, lambda: self._set_status("Fuzz complete", f"{result.total_cases_sent} cases, {result.failures_detected} failures"))
+                except Exception as exc:
+                    self.root.after(0, lambda: _output_write(self.fuzz_output, f"\nERROR: {exc}\n"))
+                    self.root.after(0, lambda: self._set_status("Fuzz failed", str(exc)))
+                finally:
+                    self.root.after(0, lambda: self._fuzz_run_btn.config(state="normal"))
+                    self.root.after(0, lambda: self._fuzz_stop_btn.config(state="disabled"))
+                    self._fuzz_harness = None
+
+            threading.Thread(target=_do_fuzz, daemon=True).start()
+        except Exception as exc:
+            messagebox.showerror("Fuzz Error", str(exc))
+            self._fuzz_run_btn.config(state="normal")
+            self._fuzz_stop_btn.config(state="disabled")
+            self._set_status("Fuzz failed", str(exc))
+
+    def _on_fuzz_stop(self) -> None:
+        if self._fuzz_harness:
+            self._fuzz_harness.stop()
+            _output_write(self.fuzz_output, "\nStop requested...\n")
+            self._set_status("Stopping", "Fuzz campaign stop requested.")
 
     def run(self) -> None:
         self.root.mainloop()
