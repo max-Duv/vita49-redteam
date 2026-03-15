@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vita49-redteam"
+version = "0.1.0"
+description = "VITA 49 (VRT) Red-Team Packet Crafting & Injection Toolkit"
+requires-python = ">=3.10"
+dependencies = [
+    "scapy>=2.5",
+    "click>=8.0",
+    "pyshark>=0.6",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+vita49-rt = "vita49_redteam.cli:cli"
+
+[project.gui-scripts]
+vita49-rt-gui = "vita49_redteam.gui:main"
+
+[tool.setuptools.packages.find]
+include = ["vita49_redteam*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
