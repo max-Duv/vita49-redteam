@@ -84,6 +84,24 @@ vita49-rt craft --type if_data --stream-id 0xABCD1234 --count 5 --payload-size 2
 vita49-rt craft --type if_data --stream-id 0x1234 --payload-size 512 --output crafted.pcap
 ```
 
+#### Reference Packet Recipes
+
+These are good starter packets to craft when validating the toolkit, checking dissectors, or building a small regression corpus.
+
+| Packet | Why craft it | Example command |
+|---|---|---|
+| `IF Data` baseline | Verifies the common happy path: stream ID present, payload present, simple timing fields | `vita49-rt craft --type if_data --stream-id 0x1001 --count 1 --payload-size 256 --tsi utc --tsf realtime --integer-ts 100 --fractional-ts 5000 --hex-dump` |
+| `IF Context` with Class ID | Exercises optional metadata fields and context parsing logic | `vita49-rt craft --type if_context --stream-id 0x2001 --count 1 --payload-size 32 --tsi utc --integer-ts 200 --class-id 0012A2:0001:0002 --hex-dump` |
+| `Extension Data` with Trailer | Useful for checking extension handling and trailer decoding | `vita49-rt craft --type ext_data --stream-id 0x3001 --count 1 --payload-size 64 --trailer 0xC0000000 --hex-dump` |
+| Packet-count wrap sample | Generates enough packets to inspect the 4-bit packet-count rollover from `15` back to `0` | `vita49-rt craft --type if_data --stream-id 0x4001 --count 16 --payload-size 16 --output rollover_sample.pcap` |
+
+If you want a minimal packet set for smoke testing, start with:
+
+1. one `IF Data` packet
+2. one `IF Context` packet with a Class ID
+3. one `Extension Data` packet with a trailer
+4. one 16-packet rollover capture
+
 #### Send Packets
 
 ```bash
